@@ -152,6 +152,11 @@ struct GoalProgressBar: View {
                 }
             }
         }
+        .onChange(of: current) {
+            withAnimation(.easeOut(duration: 0.6)) {
+                animatedProgress = targetProgress
+            }
+        }
     }
 }
 
