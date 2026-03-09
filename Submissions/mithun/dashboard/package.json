@@ -9,6 +9,7 @@
     "react-scripts": "5.0.1",
     "recharts": "^2.12.7"
   },
+  "proxy": "https://app.backboard.io",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build"

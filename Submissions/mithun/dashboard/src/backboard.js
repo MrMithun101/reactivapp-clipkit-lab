@@ -1,5 +1,6 @@
 const API_KEY = process.env.REACT_APP_BACKBOARD_API_KEY || 'espr_N8iIQE8wNuJCq1VKebscrrB23EbGvbLHGaQF7BZoD54';
-const BASE = process.env.NODE_ENV === 'development' ? '/api' : 'https://app.backboard.io/api';
+// Always use /api — proxied to Backboard by Vercel rewrites (prod) and CRA proxy (dev)
+const BASE = '/api';
 
 function jsonHeaders() {
   return {

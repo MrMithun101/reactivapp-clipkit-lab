@@ -20,8 +20,8 @@ function parseMemoryToDonation(memory) {
       timestamp: m.timestamp || memory.created_at || new Date().toISOString(),
     };
   }
-  // Fallback: parse "Donation: $10, 4 meals, Hamilton, ON, hamilton-food-share"
-  const match = (memory.content || '').match(/Donation:\s*\$(\d+),\s*(\d+)\s*meals,\s*([^,]+),\s*[A-Z]{2},\s*(.+)/);
+  // Fallback: parse "Donation: $10, 4 meals, Hamilton, hamilton-food-share"
+  const match = (memory.content || '').match(/Donation:\s*\$(\d+),\s*(\d+)\s*meals,\s*([^,]+),\s*(.+)/);
   if (match) {
     return {
       causeId: match[4].trim(),
