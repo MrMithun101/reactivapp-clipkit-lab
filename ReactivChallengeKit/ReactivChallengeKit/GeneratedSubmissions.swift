@@ -78,7 +78,7 @@ struct CityLeaderboard: View {
 
                         Spacer()
 
-                        Text("\(cause.mealsToday) meals")
+                        Text("\(cause.mealsForToday) meals")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.giveGreen)
                     }
@@ -259,7 +259,7 @@ struct CauseData: Identifiable {
     let name: String
     let city: String
     let foundedYear: Int
-    let mealsToday: Int
+    let mealsToday: Int        // Sunday baseline (used as fallback)
     let dailyGoal: Int
     let donorsThisWeek: Int
     let scenario: String
@@ -267,6 +267,17 @@ struct CauseData: Identifiable {
     let costPerMeal: Double
     let bio: String
     let websiteURL: String
+    // Per-day baselines matching the dashboard's CAUSE_BASELINE.dailyMealsByDay
+    let dailyMealsByDay: [String: Int]
+
+    /// Returns today's baseline meal count (day-of-week aware, matches dashboard)
+    var mealsForToday: Int {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE"  // Always "Mon", "Tue", etc. regardless of device locale
+        let dayKey = formatter.string(from: Date())
+        return dailyMealsByDay[dayKey] ?? mealsToday
+    }
 
     var progress: Double {
         guard dailyGoal > 0 else { return 0 }
@@ -279,14 +290,15 @@ struct CauseData: Identifiable {
             name: "Hamilton Food Share",
             city: "Hamilton, ON",
             foundedYear: 1984,
-            mealsToday: 848,
+            mealsToday: 849,
             dailyGoal: 1000,
             donorsThisWeek: 94,
             scenario: "A single mom skipped lunch so her kids could eat. Your gift means she doesn't have to choose.",
             causeOptions: ["Emergency food hampers", "Children's breakfast"],
             costPerMeal: 2.50,
             bio: "Hamilton Food Share has been the central food distribution hub for Hamilton since 1984. They coordinate a network of 160+ emergency food programs and served over 18,000 people monthly in 2024.",
-            websiteURL: "https://www.hamiltonfoodshare.org"
+            websiteURL: "https://www.hamiltonfoodshare.org",
+            dailyMealsByDay: ["Sun": 849, "Mon": 912, "Tue": 978, "Wed": 1034, "Thu": 964, "Fri": 1018, "Sat": 887]
         ),
         CauseData(
             id: "toronto-daily-bread",
@@ -300,7 +312,8 @@ struct CauseData: Identifiable {
             causeOptions: ["Hot meal programs", "Grocery essentials"],
             costPerMeal: 2.00,
             bio: "Daily Bread Food Bank has fought hunger in Toronto since 1983. They operate the city's largest network of food programs, serving over 270,000 client visits per month across 200+ member agencies.",
-            websiteURL: "https://www.dailybread.ca"
+            websiteURL: "https://www.dailybread.ca",
+            dailyMealsByDay: ["Sun": 1204, "Mon": 1275, "Tue": 1388, "Wed": 1492, "Thu": 1420, "Fri": 1510, "Sat": 1330]
         ),
         CauseData(
             id: "vancouver-food-bank",
@@ -314,7 +327,8 @@ struct CauseData: Identifiable {
             causeOptions: ["Community kitchen", "Student meal packs"],
             costPerMeal: 3.00,
             bio: "Greater Vancouver Food Bank is BC's largest food bank, established in 1982. They provide food to over 100,000 people each month through 150 community agency members across Metro Vancouver.",
-            websiteURL: "https://www.foodbank.bc.ca"
+            websiteURL: "https://www.foodbank.bc.ca",
+            dailyMealsByDay: ["Sun": 673, "Mon": 744, "Tue": 831, "Wed": 918, "Thu": 864, "Fri": 902, "Sat": 790]
         ),
     ]
 
@@ -342,6 +356,7 @@ final class DonationState: ObservableObject {
     @Published var roundUpSelected: Bool = false
     @Published var causeDirection: String = ""
     @Published var isProcessingPayment: Bool = false
+    @Published var liveMealsBaseline: Int = 0  // Set from Backboard fetch in CauseLandingView
 
     init(causeId: String = "hamilton-food-share") {
         self.selectedCause = causeId
@@ -560,6 +575,11 @@ struct CauseLandingView: View {
     let cause: CauseData
     @EnvironmentObject var donationState: DonationState
 
+    @State private var liveMealsToday: Int = 0
+
+    private static let backboardAPIKey = "espr_N8iIQE8wNuJCq1VKebscrrB23EbGvbLHGaQF7BZoD54"
+    private static let backboardAssistantId = "6ae73c6a-9d50-47fa-a224-cecb3b4e94d4"
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -611,7 +631,7 @@ struct CauseLandingView: View {
                     .lineLimit(2)
                     .padding(.horizontal, 32)
 
-                GoalProgressBar(current: cause.mealsToday, goal: cause.dailyGoal)
+                GoalProgressBar(current: liveMealsToday, goal: cause.dailyGoal)
                     .padding(.horizontal, 16)
 
                 HStack(spacing: 4) {
@@ -643,6 +663,48 @@ struct CauseLandingView: View {
             .padding(.bottom, 16)
         }
         .scrollIndicators(.hidden)
+        .onAppear {
+            liveMealsToday = cause.mealsForToday
+            donationState.liveMealsBaseline = cause.mealsForToday
+            Task { await fetchLiveMeals() }
+        }
+    }
+
+    // Fetch today's donation memories from Backboard and add to the day's baseline
+    private func fetchLiveMeals() async {
+        guard let url = URL(string: "https://app.backboard.io/api/assistants/\(Self.backboardAssistantId)/memories") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(Self.backboardAPIKey, forHTTPHeaderField: "X-API-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let memories = json["memories"] as? [[String: Any]] else { return }
+
+        let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: Date())
+        let isoFormatter = ISO8601DateFormatter()
+
+        let todayMeals = memories
+            .filter { memory in
+                guard let meta = memory["metadata"] as? [String: Any],
+                      let causeId = meta["causeId"] as? String,
+                      causeId == cause.id,
+                      let tsStr = meta["timestamp"] as? String,
+                      let ts = isoFormatter.date(from: tsStr) else { return false }
+                return ts >= todayStart
+            }
+            .compactMap { memory -> Int? in
+                (memory["metadata"] as? [String: Any]).flatMap { $0["meals"] as? Int }
+            }
+            .reduce(0, +)
+
+        await MainActor.run {
+            liveMealsToday = cause.mealsForToday + todayMeals
+            donationState.liveMealsBaseline = liveMealsToday
+        }
     }
 }
 
@@ -665,8 +727,12 @@ struct ImpactConfirmationView: View {
         donationState.mealsProvided
     }
 
+    private var currentMealsBaseline: Int {
+        donationState.liveMealsBaseline > 0 ? donationState.liveMealsBaseline : cause.mealsForToday
+    }
+
     private var newMealCount: Int {
-        cause.mealsToday + mealsProvided
+        currentMealsBaseline + mealsProvided
     }
 
     private var newProgress: CGFloat {
@@ -696,13 +762,13 @@ struct ImpactConfirmationView: View {
 
                 if showCounter {
                     VStack(spacing: 8) {
-                        Text("\(cause.mealsToday) meals")
+                        Text("\(currentMealsBaseline) meals")
                             .font(.system(size: 16))
                             .foregroundStyle(.giveTextSecondary)
                             .strikethrough(true, color: .giveTextSecondary)
 
                         ImpactCounter(
-                            startValue: cause.mealsToday,
+                            startValue: currentMealsBaseline,
                             endValue: newMealCount
                         )
                     }
@@ -807,7 +873,49 @@ struct ImpactConfirmationView: View {
             }
         }
 
+        writeBackboardMemory()
         scheduleImpactNotification()
+    }
+
+    // MARK: - Backboard Memory
+
+    private static let backboardAPIKey = "espr_N8iIQE8wNuJCq1VKebscrrB23EbGvbLHGaQF7BZoD54"
+    private static let backboardAssistantId = "6ae73c6a-9d50-47fa-a224-cecb3b4e94d4"
+
+    private func writeBackboardMemory() {
+        let amount = donationState.finalAmount
+        let meals = donationState.mealsProvided
+        let city = cause.city
+        let causeId = cause.id
+
+        Task.detached(priority: .utility) {
+            let formatter = ISO8601DateFormatter()
+            let timestamp = formatter.string(from: Date())
+
+            let metadata: [String: Any] = [
+                "causeId": causeId,
+                "binLocation": causeId,
+                "amount": amount,
+                "meals": meals,
+                "city": city,
+                "timestamp": timestamp,
+            ]
+            let body: [String: Any] = [
+                "content": "Donation: $\(amount), \(meals) meals, \(city), \(causeId)",
+                "metadata": metadata,
+            ]
+
+            guard let url = URL(string: "https://app.backboard.io/api/assistants/\(Self.backboardAssistantId)/memories"),
+                  let jsonData = try? JSONSerialization.data(withJSONObject: body) else { return }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue(Self.backboardAPIKey, forHTTPHeaderField: "X-API-Key")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = jsonData
+
+            _ = try? await URLSession.shared.data(for: request)
+        }
     }
 
     private func scheduleImpactNotification() {
@@ -827,10 +935,13 @@ struct ImpactConfirmationView: View {
                 guard granted else { return }
 
                 let content = UNMutableNotificationContent()
-                content.title = causeName
+                content.title = "Flourish • \(causeName)"
                 content.body = "Your $\(donationState.finalAmount) provided \(provided) meals. Today's count: \(mealCount) meals packed across \(causeCity). Thank you!"
                 content.sound = .default
                 content.categoryIdentifier = "GIVE_IMPACT"
+                if let logoAttachment = makeNotificationLogoAttachment() {
+                    content.attachments = [logoAttachment]
+                }
 
                 let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 10, repeats: false)
                 let request = UNNotificationRequest(
@@ -846,8 +957,27 @@ struct ImpactConfirmationView: View {
         }
     }
 
+    private func makeNotificationLogoAttachment() -> UNNotificationAttachment? {
+        let possibleNames = ["flourish_notification_logo", "flourish_logo", "logo512", "logo192"]
+
+        for name in possibleNames {
+            if let image = UIImage(named: name),
+               let data = image.pngData() {
+                let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).png")
+                do {
+                    try data.write(to: fileURL, options: .atomic)
+                    return try UNNotificationAttachment(identifier: "flourish-logo", url: fileURL, options: nil)
+                } catch {
+                    continue
+                }
+            }
+        }
+
+        return nil
+    }
+
     private func shareGiveClip() {
-        let text = "I just provided \(mealsProvided) meals in \(cause.city) with one tap. \(newMealCount) meals packed today. Join in: givekit.ca/cause/\(cause.id)"
+        let text = "I just funded \(mealsProvided) meals in \(cause.city) \u{1F96B} Tap to give: givekit.ca/cause/\(cause.id)"
         let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let root = windowScene.windows.first?.rootViewController {

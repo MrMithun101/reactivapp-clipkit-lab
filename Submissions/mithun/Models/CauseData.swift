@@ -19,7 +19,8 @@ struct CauseData: Identifiable {
     /// Returns today's baseline meal count (day-of-week aware, matches dashboard)
     var mealsForToday: Int {
         let formatter = DateFormatter()
-        formatter.dateFormat = "EEE"  // "Mon", "Tue", etc.
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE"  // Always "Mon", "Tue", etc. regardless of device locale
         let dayKey = formatter.string(from: Date())
         return dailyMealsByDay[dayKey] ?? mealsToday
     }
