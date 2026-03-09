@@ -15,8 +15,12 @@ struct ImpactConfirmationView: View {
         donationState.mealsProvided
     }
 
+    private var currentMealsBaseline: Int {
+        donationState.liveMealsBaseline > 0 ? donationState.liveMealsBaseline : cause.mealsForToday
+    }
+
     private var newMealCount: Int {
-        cause.mealsToday + mealsProvided
+        currentMealsBaseline + mealsProvided
     }
 
     private var newProgress: CGFloat {
@@ -46,13 +50,13 @@ struct ImpactConfirmationView: View {
 
                 if showCounter {
                     VStack(spacing: 8) {
-                        Text("\(cause.mealsToday) meals")
+                        Text("\(currentMealsBaseline) meals")
                             .font(.system(size: 16))
                             .foregroundStyle(.giveTextSecondary)
                             .strikethrough(true, color: .giveTextSecondary)
 
                         ImpactCounter(
-                            startValue: cause.mealsToday,
+                            startValue: currentMealsBaseline,
                             endValue: newMealCount
                         )
                     }

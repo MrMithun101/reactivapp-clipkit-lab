@@ -46,3 +46,11 @@ export async function bbSendMessage(threadId, content) {
   });
   return readJsonOrThrow(res, 'Send message');
 }
+
+export async function bbGetMemories(assistantId) {
+  const res = await fetch(`${BASE}/assistants/${assistantId}/memories`, {
+    method: 'GET',
+    headers: jsonHeaders(),
+  });
+  return readJsonOrThrow(res, 'Get memories');
+}

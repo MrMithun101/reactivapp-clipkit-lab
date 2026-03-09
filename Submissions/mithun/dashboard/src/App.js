@@ -3,7 +3,37 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie
 } from 'recharts';
-import { bbCreateAssistant, bbCreateThread, bbSendMessage } from './backboard';
+import { bbCreateThread, bbSendMessage, bbGetMemories } from './backboard';
+
+// Shared assistant ID — same one the iOS clip writes donation memories to
+const SHARED_ASSISTANT_ID = '6ae73c6a-9d50-47fa-a224-cecb3b4e94d4';
+
+function parseMemoryToDonation(memory) {
+  const m = memory.metadata || {};
+  if (m.causeId && m.amount != null && m.meals != null) {
+    return {
+      causeId: m.causeId,
+      binLocation: m.binLocation || m.causeId,
+      amount: Number(m.amount),
+      meals: Number(m.meals),
+      city: (m.city || 'Hamilton').split(',')[0].trim(),
+      timestamp: m.timestamp || memory.created_at || new Date().toISOString(),
+    };
+  }
+  // Fallback: parse "Donation: $10, 4 meals, Hamilton, ON, hamilton-food-share"
+  const match = (memory.content || '').match(/Donation:\s*\$(\d+),\s*(\d+)\s*meals,\s*([^,]+),\s*[A-Z]{2},\s*(.+)/);
+  if (match) {
+    return {
+      causeId: match[4].trim(),
+      binLocation: match[4].trim(),
+      amount: Number(match[1]),
+      meals: Number(match[2]),
+      city: match[3].trim(),
+      timestamp: memory.created_at || new Date().toISOString(),
+    };
+  }
+  return null;
+}
 
 // ─── Raw Donation Entries (75 realistic entries, last 7 days) ────────────────
 
@@ -282,7 +312,13 @@ function GoalRing({ weeklyGoal }) {
 
 // ─── Header ──────────────────────────────────────────────────────────────────
 
-function Header() {
+function Header({ syncing, lastSync }) {
+  const syncLabel = syncing
+    ? 'Syncing…'
+    : lastSync
+    ? `Synced ${lastSync.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : 'Connecting…';
+
   return (
     <header className="header">
       <div className="header-left">
@@ -296,6 +332,10 @@ function Header() {
         </div>
       </div>
       <div className="header-right">
+        <span className="sync-indicator" title="Live data from iOS App Clip">
+          <span className={`sync-dot ${syncing ? 'syncing' : lastSync ? 'live' : 'waiting'}`} />
+          {syncLabel}
+        </span>
         <div className="powered-badge">Powered by GiveClip</div>
       </div>
     </header>
@@ -507,7 +547,7 @@ function localAnalystReply(data, msg) {
   return `Current snapshot: ${data.stats.mealsToday} meals funded, $${data.stats.dollarsToday} raised, ${data.stats.donationsToday} donations. Top bin: ${bestBin?.name || 'N/A'}.`;
 }
 
-function ChatPanel({ data, onClose }) {
+function ChatPanel({ data, sharedAssistantId, onClose }) {
   const [messages, setMessages] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.messages)) || []; }
     catch { return []; }
@@ -522,12 +562,8 @@ function ChatPanel({ data, onClose }) {
     let cancelled = false;
     async function init() {
       try {
-        let aId = localStorage.getItem(STORAGE_KEYS.assistantId);
-        if (!aId) {
-          const a = await bbCreateAssistant('GiveClip Analyst', SYSTEM_PROMPT);
-          aId = a.assistant_id;
-          localStorage.setItem(STORAGE_KEYS.assistantId, aId);
-        }
+        // Use the shared assistant ID (same one the iOS clip writes to)
+        const aId = sharedAssistantId;
         let tId = localStorage.getItem(STORAGE_KEYS.threadId);
         if (!tId) {
           const t = await bbCreateThread(aId);
@@ -545,7 +581,7 @@ function ChatPanel({ data, onClose }) {
     }
     init();
     return () => { cancelled = true; };
-  }, []);
+  }, [sharedAssistantId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -601,13 +637,7 @@ function ChatPanel({ data, onClose }) {
     setReady(false);
 
     try {
-      let aId = localStorage.getItem(STORAGE_KEYS.assistantId);
-      if (!aId) {
-        const a = await bbCreateAssistant('GiveClip Analyst', SYSTEM_PROMPT);
-        aId = a.assistant_id;
-        localStorage.setItem(STORAGE_KEYS.assistantId, aId);
-      }
-      const t = await bbCreateThread(aId);
+      const t = await bbCreateThread(sharedAssistantId);
       const tId = t.thread_id;
       localStorage.setItem(STORAGE_KEYS.threadId, tId);
       threadRef.current = tId;
@@ -616,7 +646,7 @@ function ChatPanel({ data, onClose }) {
     } finally {
       setReady(true);
     }
-  }, []);
+  }, [sharedAssistantId]);
 
   return (
     <aside className="chat-panel">
@@ -684,12 +714,38 @@ function ChatPanel({ data, onClose }) {
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const data = useMemo(() => aggregate(RAW_DONATIONS, ACTIVE_CAUSE), []);
+  const [liveDonations, setLiveDonations] = useState([]);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
   const [chatOpen, setChatOpen] = useState(true);
+
+  const fetchLiveDonations = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const result = await bbGetMemories(SHARED_ASSISTANT_ID);
+      const memories = result.memories || result.data || (Array.isArray(result) ? result : []);
+      const parsed = memories.map(parseMemoryToDonation).filter(Boolean);
+      setLiveDonations(parsed);
+      setLastSync(new Date());
+    } catch (err) {
+      console.error('Live sync failed:', err);
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveDonations();
+    const interval = setInterval(fetchLiveDonations, 30000);
+    return () => clearInterval(interval);
+  }, [fetchLiveDonations]);
+
+  const allDonations = useMemo(() => [...RAW_DONATIONS, ...liveDonations], [liveDonations]);
+  const data = useMemo(() => aggregate(allDonations, ACTIVE_CAUSE), [allDonations]);
 
   return (
     <div className="app">
-      <Header />
+      <Header syncing={syncing} lastSync={lastSync} />
       <div className="app-body">
         <div className="dashboard-content">
           <main className="main">
@@ -707,7 +763,7 @@ export default function App() {
             <span className="footer-text">GiveClip Dashboard · Hamilton Food Share · {new Date().getFullYear()}</span>
           </footer>
         </div>
-        {chatOpen && <ChatPanel data={data} onClose={() => setChatOpen(false)} />}
+        {chatOpen && <ChatPanel data={data} sharedAssistantId={SHARED_ASSISTANT_ID} onClose={() => setChatOpen(false)} />}
       </div>
       {!chatOpen && (
         <button className="chat-fab" onClick={() => setChatOpen(true)} title="Open AI Insights">

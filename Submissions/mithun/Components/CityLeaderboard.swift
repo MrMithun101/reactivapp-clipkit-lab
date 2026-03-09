@@ -20,7 +20,7 @@ struct CityLeaderboard: View {
 
                         Spacer()
 
-                        Text("\(cause.mealsToday) meals")
+                        Text("\(cause.mealsForToday) meals")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.giveGreen)
                     }

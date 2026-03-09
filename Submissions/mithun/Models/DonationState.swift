@@ -15,6 +15,7 @@ final class DonationState: ObservableObject {
     @Published var roundUpSelected: Bool = false
     @Published var causeDirection: String = ""
     @Published var isProcessingPayment: Bool = false
+    @Published var liveMealsBaseline: Int = 0  // Set from Backboard fetch in CauseLandingView
 
     init(causeId: String = "hamilton-food-share") {
         self.selectedCause = causeId

@@ -4,6 +4,11 @@ struct CauseLandingView: View {
     let cause: CauseData
     @EnvironmentObject var donationState: DonationState
 
+    @State private var liveMealsToday: Int = 0
+
+    private static let backboardAPIKey = "espr_N8iIQE8wNuJCq1VKebscrrB23EbGvbLHGaQF7BZoD54"
+    private static let backboardAssistantId = "6ae73c6a-9d50-47fa-a224-cecb3b4e94d4"
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -55,7 +60,7 @@ struct CauseLandingView: View {
                     .lineLimit(2)
                     .padding(.horizontal, 32)
 
-                GoalProgressBar(current: cause.mealsToday, goal: cause.dailyGoal)
+                GoalProgressBar(current: liveMealsToday, goal: cause.dailyGoal)
                     .padding(.horizontal, 16)
 
                 HStack(spacing: 4) {
@@ -87,5 +92,47 @@ struct CauseLandingView: View {
             .padding(.bottom, 16)
         }
         .scrollIndicators(.hidden)
+        .onAppear {
+            liveMealsToday = cause.mealsForToday
+            donationState.liveMealsBaseline = cause.mealsForToday
+            Task { await fetchLiveMeals() }
+        }
+    }
+
+    // Fetch today's donation memories from Backboard and add to the day's baseline
+    private func fetchLiveMeals() async {
+        guard let url = URL(string: "https://app.backboard.io/api/assistants/\(Self.backboardAssistantId)/memories") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(Self.backboardAPIKey, forHTTPHeaderField: "X-API-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let memories = json["memories"] as? [[String: Any]] else { return }
+
+        let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: Date())
+        let isoFormatter = ISO8601DateFormatter()
+
+        let todayMeals = memories
+            .filter { memory in
+                guard let meta = memory["metadata"] as? [String: Any],
+                      let causeId = meta["causeId"] as? String,
+                      causeId == cause.id,
+                      let tsStr = meta["timestamp"] as? String,
+                      let ts = isoFormatter.date(from: tsStr) else { return false }
+                return ts >= todayStart
+            }
+            .compactMap { memory -> Int? in
+                (memory["metadata"] as? [String: Any]).flatMap { $0["meals"] as? Int }
+            }
+            .reduce(0, +)
+
+        await MainActor.run {
+            liveMealsToday = cause.mealsForToday + todayMeals
+            donationState.liveMealsBaseline = liveMealsToday
+        }
     }
 }
