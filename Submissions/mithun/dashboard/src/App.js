@@ -203,7 +203,8 @@ function aggregate(entries, causeId) {
 
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekStart = new Date(todayStart.getTime() - 6 * 86400000);
+  // Use local-date arithmetic (not ms) to avoid DST spring-forward skipping a day
+  const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
   const todayLabel = DAY_LABELS[todayStart.getDay()];
   const baselineMealsToday = baseline.dailyMealsByDay?.[todayLabel] ?? baseline.mealsToday;
 
@@ -248,7 +249,8 @@ function aggregate(entries, causeId) {
 
   const trendMap = {};
   for (let i = 6; i >= 0; i--) {
-    const d = new Date(todayStart.getTime() - i * 86400000);
+    // Local-date construction handles DST correctly (ms arithmetic skips days on spring-forward)
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
     const dayLabel = DAY_LABELS[d.getDay()];
     trendMap[dayLabel] = baseline.dailyMealsByDay?.[dayLabel] ?? 0;
   }
