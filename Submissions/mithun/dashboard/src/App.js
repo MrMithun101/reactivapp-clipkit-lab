@@ -1,9 +1,11 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth0 } from '@auth0/auth0-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie
 } from 'recharts';
 import { bbCreateAssistant, bbCreateThread, bbSendMessage } from './backboard';
+import LoginScreen from './LoginScreen';
 
 // ─── Raw Donation Entries (75 realistic entries, last 7 days) ────────────────
 
@@ -684,8 +686,12 @@ function ChatPanel({ data, onClose }) {
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const { isAuthenticated, isLoading } = useAuth0();
   const data = useMemo(() => aggregate(RAW_DONATIONS, ACTIVE_CAUSE), []);
   const [chatOpen, setChatOpen] = useState(true);
+
+  if (isLoading) return null;
+  if (!isAuthenticated) return <LoginScreen />;
 
   return (
     <div className="app">
